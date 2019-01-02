@@ -1,0 +1,505 @@
+---
+title: "final work"
+author: "Oksana Rebrik"
+output:
+  html_document:
+    code_folding: show
+    theme: cosmo
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+ 
+ 
+## Introduction
+ 
+The database contains information on the evaluation of homework students philologists on the course of programming on the Python. Since the work will be graded by various TAs, I would like to know which of them evaluates more strictly and who is softer, since a biased assessment greatly influences the learning process.
+ 
+ 
+## Load libraries
+ 
+I load libraries for further work which are responsible for uploading data, connecting functions, data manipulation, and its visualization. 
+ 
+```{r libraries}
+# uplading data
+library(haven)
+library(readr)
+ 
+# data manipulation
+library(dplyr)
+library(psych)
+ 
+# visualizing data
+library(ggplot2)
+library(knitr)
+library(tidyquant)
+library(sjPlot)
+library(stargazer)
+library(gridExtra)
+library(rockchalk)
+library(ggpubr)
+ 
+#making default theme
+theme_set(theme_tq())
+ 
+#tests
+library(stats)
+library(car)
+library(pwr)
+
+#source
+source("functions.R")
+```
+ 
+### Theme
+ 
+Later, I will use this theme instead of the default one. 
+ 
+```{r setting theme}
+theme_set(theme_tq())
+theme_update(plot.title = element_text(hjust = 0.5))
+```
+ 
+## Generate data
+ 
+ 
+```{r data 2}
+set.seed(1)
+marks_norm <- data.frame(student = c(1:1000),
+                         grade = my_sample(1000, 13, 4, 0, 20), 
+                         TA = sample(1:3, 1000, replace = TRUE))
+
+marks_norm$TA <- ordered(marks_norm$TA, levels = c("1", "2", "3"))
+
+ggplot(marks_norm)+
+  geom_boxplot(aes(TA, grade))
+describe(marks_norm)
+```
+ 
+First data will be generated from normal distribution with large sample, to meet assumptions, but it does not have any difference in means.  Mean grade is near 13, data is negatively skewed and platykurtic, but a few. 
+ 
+```{r data 3}
+set.seed(1)
+TA1 <- data.frame(student = c(1:300),
+                  grade = my_sample(300, 16, 3, 0, 20),
+                  TA = 1)
+TA2 <- data.frame(student = c(301:600),
+                  grade = my_sample(300, 12, 3, 0, 20),
+                  TA = 2)
+TA3 <- data.frame(student = c(601:900),
+                  grade = my_sample(300, 9, 3, 0, 20),
+                  TA = 3)
+marks_diff_TA <- rbind(TA1, TA2, TA3)
+
+marks_diff_TA$TA <- ordered(marks_diff_TA$TA, levels = c("1", "2", "3"))
+
+
+ggplot(marks_diff_TA)+
+  geom_boxplot(aes(TA, grade))
+describe(marks_diff_TA)
+```
+ 
+Next piece of data generated with difference in means, but it is normal, groups have same sizes and same standard deviation. Mean grade for firts TA is 16, and 12 and 9 for second and third respectively. For general sample median is 12, SD is 4.2. _(If we multiply 4.2 by 10...)_ 
+ 
+ 
+ 
+```{r data samll}
+set.seed(1)
+TA1 <- data.frame(student = c(1:10),
+                  grade = my_sample(10, 16, 3, 0, 20),
+                  TA = 1)
+TA2 <- data.frame(student = c(11:20),
+                  grade = my_sample(10, 12, 3, 0, 20),
+                  TA = 2)
+TA3 <- data.frame(student = c(21:30),
+                  grade = my_sample(10, 9, 3, 0, 20),
+                  TA = 3)
+marks_small <- rbind(TA1, TA2, TA3)
+
+marks_small$TA <- ordered(marks_small$TA, levels = c("1", "2", "3"))
+
+
+ggplot(marks_small)+
+  geom_boxplot(aes(TA, grade))
+describe(marks_small)
+```
+ 
+This data generated for emulation of small sample size. Threre is only 30 observations.
+ 
+ 
+```{r data 5}
+set.seed(1)
+TA1 <- data.frame(student = c(1:34),
+                  grade = my_sample(34, 15, 1, 0, 20),
+                  TA = 1)
+TA2 <- data.frame(student = c(35:67),
+                  grade = my_sample(33, 13, 5, 0, 20),
+                  TA = 2)
+TA3 <- data.frame(student = c(68:100),
+                  grade = my_sample(33, 10, 9, 0, 20),
+                  TA = 3)
+marks_sd <- rbind(TA1, TA2, TA3)
+
+marks_sd$TA <- ordered(marks_sd$TA, levels = c("1", "2", "3"))
+
+ggplot(marks_sd)+
+  geom_boxplot(aes(TA, grade))
+describeBy(marks_sd, group = "TA")
+```
+ 
+This data for not equal variances and small difference between groups due to increased SD for second and third TA.
+ 
+```{r remove TA}
+remove(TA1, TA2, TA3)
+# they won`t be used later
+```
+ 
+
+ 
+
+## ANOVA
+
+ANOVA or Analysis of Variance, is most common test for checking difference in means, if there are more than two groups. There is also a Tukey test, but it is less friendly and harder to interpret. In our data we have three groups.
+
+#### Assumptions
+ 
+Before making ANOVA itself, I check its assumptions:
+ 
+##### Normality
+ 
+As far as we do have less than 5k observations, I check the normality of residuals.
+ 
+> ($H_0$): the data is distributed normally;  
+> ($H_A$): the data is not distributed normally.
+ 
+
+```{r residuals_normality}
+set.seed(1)
+model = aov(marks_norm$grade ~ marks_norm$TA)
+residuals = model$residuals
+shapiro.test(residuals)
+```
+ 
+P-value is less than 0.05 (*2.496e-07*). So, we reject null hypothesis about normality of the distribution.
+ 
+Also, we create box-plots for checking availability of outliers.
+ 
+```{r boxplot_assum} 
+ggpubr::ggboxplot(marks_norm, x = "TA", y = "grade", 
+          color = "TA", palette = c("#00519d", "#00519d", "#00519d"),
+          xlab = "TA",
+          ylab = "grade",
+          title = "Grades for a python class per TA") +
+  theme(legend.position="none")
+```
+ 
+We can see that there are outliers in all categories. It is a good reason for running non-parametric test. 
+ 
+##### Homogeneity of variances
+ 
+Next step is checking homogeneity with the help of Levene's test. I choose this one because variable is not distributed normally. And it is less sensitive.
+ 
+> ($H_0$): variances are equal between categories;  
+> ($H_A$): variances are not equal.
+ 
+```{r homogeneity}
+set.seed(1)
+leveneTest(marks_norm$grade ~ marks_norm$TA)
+```
+ 
+Since p-value is more than 0.05 (* 0.7387*), I do not reject the null hypothesis and meet second assumption.
+ 
+#### Test itself (finally!)
+ 
+Now I can apply Kruskall-Wallis to our data with following hypotheses:
+ 
+> ($H_0$): the difference between the means of grades among the groups of different TAs is equal to zero;  
+> ($H_A$): the difference between the means of grades among the groups of different TAs is not equal to zero.
+ 
+```{r kruskal}
+kruskal.test(grade ~ TA, data = marks_norm)
+```
+ 
+P-value is more than 0.05 -- *0.2779*. Therefore, I can not reject the null hypothesis, and I prove that there is no difference between TAs grading.
+ 
+However, I would like to use parametric test (just in case) with the correction on equal variances.
+ 
+```{r anova_post}
+norm_anova = oneway.test(grade ~ TA, data = marks_norm, var.equal = TRUE)
+norm_anova
+```
+ 
+As the result of large F-statistics *(F (2, 197) = 1.1296)* and p-value more than 0.05 *(0.3236)*, I can not confirm (one more time) rejection of null hypothesis.
+#### Post-hoc test
+ 
+As in our case, I have deal with equal variances, I choose pairwise t-test with bonferroni correction.
+ 
+```{r posthoc}
+pairwise.t.test(marks_norm$grade, marks_norm$TA, adjust = "bonferroni")
+```
+ 
+Now I can say that grades is different for all TAs because p-value for each sell is really small. 
+ 
+```{r power}
+pwr.anova.test(k = 3, n = 660, f = 0,  sig.level = 0.05, power = NULL)
+```
+ 
+I do not really understand, how to calculate the exact value for effect size, however, according to Jacob Cohen, it can be used as 0 for no effect, 0.1  for small effect, 0.25 and 0.5, for medium and strong respectively. (Kind of similar to correlation)
+
+For data without effect of TAs, power is really small, even for large sample.
+
+### Data 2
+
+##### Normality of data 2
+
+> ($H_0$): the data is distributed normally;  
+> ($H_A$): the data is not distributed normally.
+ 
+
+```{r residuals_normality 2}
+set.seed(1)
+model = aov(marks_diff_TA$grade ~ marks_diff_TA$TA)
+residuals = model$residuals
+shapiro.test(residuals)
+```
+ 
+P-value is more than 0.05 (*0.176*). So, I can not reject null hypothesis about normality of the distribution. Our data is distributed normally.
+ 
+Also, I create boxplots for checking availability of outliers.
+ 
+```{r boxplot_assum 2} 
+ggpubr::ggboxplot(marks_diff_TA, x = "TA", y = "grade", 
+          color = "TA", palette = c("#00519d", "#00519d", "#00519d"),
+          xlab = "TA",
+          ylab = "grade",
+          title = "Grades for a python class per TA") +
+  theme(legend.position="none")
+```
+
+There are outliers in two categories.
+ 
+##### Homogeneity of variances
+ 
+> ($H_0$): variances are equal between categories;  
+> ($H_A$): variances are not equal.
+ 
+```{r homogeneity 2}
+set.seed(1)
+leveneTest(marks_diff_TA$grade ~ marks_diff_TA$TA)
+```
+ 
+Since p-value is less than 0.05 (*0.002754*), I reject the null hypothesis and violate second assumption.
+ 
+#### Test
+ 
+> ($H_0$): the difference between the means of grades among the groups of different TAs is equal to zero;  
+> ($H_A$): the difference between the means of grades among the groups of different TAs is not equal to zero.
+ 
+Anova with correction of not equal variances. 
+ 
+```{r anova_post 2}
+diff_anova = oneway.test(grade ~ TA, data = marks_diff_TA, var.equal = FALSE)
+diff_anova
+```
+ 
+As the result of large F-statistics *(F (2, 592) = 448.68)* and p-value less than 0.05 *(2.2e-16)*, I  confirm rejection of null hypothesis. For now, however, I cannot say which groups do differ from each other. That means that it is the time to run post-hoc test.
+ 
+#### Post-hoc test
+ 
+As in our case, I have deal with not equal variances, we choose pairwise t-test with bonferroni correction.
+ 
+```{r posthoc 2}
+pairwise.t.test(marks_diff_TA$grade, marks_diff_TA$TA, adjust = "bonferroni")
+```
+ 
+Now I can say that grades is different for all TAs because p-value for each sell is really small. 
+ 
+```{r power 2}
+pwr.anova.test(k = 3, n = 300, f = 0.5,  sig.level = 0.05, power = NULL)
+```
+ 
+As well there is huge difference between groups, i will run power test with f = *0.5*, and for sample of 900, power is 1. 
+
+For data with strong effect of TAs, power is maximum, even for medium sample.
+
+
+
+### Data small
+
+##### Normality of small data
+ 
+
+```{r residuals_normality 3}
+set.seed(1)
+model = aov(marks_small$grade ~ marks_small$TA)
+residuals = model$residuals
+shapiro.test(residuals)
+```
+ 
+P-value is more than 0.05 (*0.08314*). So, we can not reject null hypothesis. Our data is distributed normally.
+ 
+```{r boxplot_assum 3} 
+ggpubr::ggboxplot(marks_small, x = "TA", y = "grade", 
+          color = "TA", palette = c("#00519d", "#00519d", "#00519d"),
+          xlab = "TA",
+          ylab = "grade",
+          title = "Grades for a python class per TA") +
+  theme(legend.position="none")
+```
+
+There are outliers in two categories.
+ 
+##### Homogeneity of variances
+
+```{r homogeneity 3}
+set.seed(1)
+leveneTest(marks_small$grade ~ marks_small$TA)
+```
+ 
+Since p-value is more than 0.05 (*0.8361*), I reject the null hypothesis and meet assumption about homogeneity of variances.
+ 
+#### Test
+ 
+```{r anova_post 3}
+small_anova = oneway.test(grade ~ TA, data = marks_small, var.equal = TRUE)
+small_anova
+```
+ 
+As the result of small F-statistics *(F (2, 27) = 19.221)* and p-value less than 0.05 *6.447e-06*, I  reject the null hypothesis. There is significant difference between means.
+ 
+#### Post-hoc test
+ 
+However, let`s check pairwise t-test
+ 
+```{r posthoc 3}
+pairwise.t.test(marks_small$grade, marks_small$TA, adjust = "bonferroni")
+```
+ 
+there is difference between each TA.
+ 
+```{r power 3}
+pwr.anova.test(k = 3, n = 10, f = 0.5,  sig.level = 0.05, power = NULL)
+```
+ 
+As well there is huge difference between groups, i will run power test with f = *0.5*, and for sample of 300, power is 0.63. That is not really good, so we have to increase groups sizes in real experiment.
+
+
+
+
+
+
+### Data not really different
+
+##### Normality of date with less difference
+ 
+
+```{r residuals_normality 4}
+set.seed(1)
+model = aov(marks_sd$grade ~ marks_sd$TA)
+residuals = model$residuals
+shapiro.test(residuals)
+```
+ 
+P-value is less than 0.05 (*0.003115*). Our data is not distributed normally.
+ 
+```{r boxplot_assum 4} 
+ggpubr::ggboxplot(marks_sd, x = "TA", y = "grade", 
+          color = "TA", palette = c("#00519d", "#00519d", "#00519d"),
+          xlab = "TA",
+          ylab = "grade",
+          title = "Grades for a python class per TA") +
+  theme(legend.position="none")
+```
+
+There are outliers in one categories.
+ 
+##### Homogeneity of variances
+
+```{r homogeneity 4}
+set.seed(1)
+leveneTest(marks_sd$grade ~ marks_sd$TA)
+```
+ 
+Since p-value is less than 0.05 (* 6.532e-13*), I don`t the null hypothesis and violate assumption about homogeneity of variances.
+ 
+#### Test
+ 
+```{r anova_post 4}
+small_anova = oneway.test(grade ~ TA, data = marks_sd, var.equal = FALSE)
+small_anova
+```
+ 
+As the result of small F-statistics *(F (2, 45) = 9.8436)* and p-value less than 0.05 *0.0002822*, I reject the null hypothesis. There is significant difference between means.
+ 
+#### Post-hoc test
+ 
+However, let`s check pairwise t-test
+ 
+```{r posthoc 4}
+pairwise.t.test(marks_sd$grade, marks_sd$TA, adjust = "bonferroni")
+```
+ 
+There is difference between first and third TA.
+ 
+```{r power 4}
+pwr.anova.test(k = 3, n = 30, f = 0.25,  sig.level = 0.05, power = NULL)
+```
+ 
+As well there is difference between two groups, i will run power test with f = *0.25*, and for sample of 90, power is 0.54. If we not able to influence on difference, our only chance to produce good data analysis is to increase sample size.
+
+
+
+
+ 
+### Power analysis 
+
+Last but not least. I have found and edit code for power analysis of ANOVA.
+
+```{r}
+# Plot sample size curves for detecting correlations of
+# various sizes.
+
+
+# range of effect size
+f <- seq(0.1, 0.5, 0.01)
+nf <- length(f)
+
+# power values
+p <- seq(0.4, 0.9, 0.1)
+np <- length(p)
+
+# obtain sample sizes
+samsize <- array(numeric(nf * np), dim=c(nf, np))
+for (i in 1:np){
+  for (j in 1:nf){
+    result <- pwr.anova.test(k = 3, n = NULL, f = f[j],
+    sig.level = 0.05, power = p[i])
+    samsize[j, i] <- ceiling(result$n)
+  }
+}
+
+# set up graph
+xrange <- range(f)
+yrange <- round(range(samsize))
+colors <- rainbow(length(p))
+plot(xrange, yrange, type = "n",
+  xlab = "Effect size (f)",
+  ylab = "Sample Size (n)")
+
+# add power curves
+for (i in 1:np){
+  lines(f, samsize[,i], type = "l", lwd = 2, col = colors[i])
+}
+
+# add annotation (grid lines, title, legend) 
+abline(v = 0, h = seq(0, yrange[2], 50), lty = 2, col = "grey89")
+abline(h = 0, v = seq(xrange[1], xrange[2], 0.02), lty = 2, col = "grey89")
+title("Sample Size Estimation for ANOVA\n
+  Sig = 0.05 (One-way)")
+legend("topright", title = "Power", as.character(p), fill = colors)
+
+# all credits to 
+# https://www.statmethods.net/stats/power.html 
+```
+
+Sample size is crucial of ANoVA tests with small effect because for effect size near *0.1* for appropriate power sample should be more then 200. On medium effect size, size of sample does not play the leading role and for power from 0.6 to 0.9 sample differ on 30-40. For Large effect size even tiny sample provide appropriate power.
